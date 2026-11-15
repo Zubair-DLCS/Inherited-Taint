@@ -1,0 +1,70 @@
+name: Run experiment with open models
+
+on:
+  workflow_dispatch:
+    inputs:
+      patients:
+        description: "Synthetic patients per model (each runs 8 conditions x 4 defences)"
+        default: "6"
+  push:
+    paths: [".github/workflows/experiment.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 340
+    strategy:
+      fail-fast: false
+      matrix:
+        model: ["qwen2.5:3b", "llama3.2:3b"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - name: Install Ollama and pull the model
+        run: |
+          curl -fsSL https://ollama.com/install.sh | sh
+          (ollama serve > ollama.log 2>&1 &) ; sleep 8
+          curl -s http://localhost:11434/api/tags || (sleep 10; curl -s http://localhost:11434/api/tags)
+          ollama pull ${{ matrix.model }}
+      - name: Unit tests
+        run: python -m pytest -q tests
+      - name: Run both experiments
+        run: |
+          python scripts/run_experiment.py --model ${{ matrix.model }} --patients ${{ github.event.inputs.patients || '6' }}
+      - name: Name for the artifact
+        id: n
+        run: echo "name=$(echo '${{ matrix.model }}' | tr ':/' '__')" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.n.outputs.name }}
+          path: results/${{ steps.n.outputs.name }}
+
+  report:
+    needs: run
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - uses: actions/download-artifact@v4
+        with:
+          path: results
+      - name: Build tables and figures
+        run: python scripts/make_report.py
+      - name: Commit results
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add results
+          git commit -m "Results from the open-model run" || echo "nothing to commit"
+          git pull --rebase
+          git push
