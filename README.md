@@ -1,4 +1,4 @@
-# Inherited Taints
+# Inherited Taint
 
 **How Legacy Health Systems Poison AI Agents, and How to Unlearn the Damage**
 
